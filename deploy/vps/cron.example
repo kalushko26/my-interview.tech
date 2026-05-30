@@ -1,0 +1,8 @@
+# /etc/cron.d/my-interview-postgres-backup
+# Ежедневный backup PostgreSQL read model в 03:15.
+#
+# Установка на VPS:
+#   cp /root/my-interview.tech/deploy/vps/cron.example /etc/cron.d/my-interview-postgres-backup
+#   chmod 644 /etc/cron.d/my-interview-postgres-backup
+
+15 3 * * * root PROJECT_DIR=/root/my-interview.tech BACKUP_DIR=/root/backups/my-interview-postgres RETENTION_DAYS=14 /root/my-interview.tech/deploy/vps/backup-postgres.sh >> /var/log/my-interview-postgres-backup.log 2>&1

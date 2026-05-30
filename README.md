@@ -100,6 +100,70 @@ npm run frontmatter -- generate --all
 3. Запустите `npm run frontmatter -- update` для автозаполнения полей
 4. Запустите `npm run frontmatter -- generate` для генерации uid и дат
 
+## 🔄 Production sync to 2shark read model
+
+Production read model хранится в PostgreSQL на VPS. База поднимается через `docker compose` в сервисе `postgres`, данные лежат в named volume `postgres_data`, порт `5432` наружу не публикуется.
+
+Автосинхронизация запускается workflow из этого репозитория:
+
+- файл workflow: `.github/workflows/production-sync.yml`;
+- события запуска: `push` в `main` и ручной `workflow_dispatch`;
+- обязательный secret: `SSH_PRIVATE_KEY`;
+- обязательные variables: `SSH_HOST`, `SSH_USER`, `SSH_DEPLOY_PATH`;
+- опциональная variable: `SSH_DEPLOY_BRANCH` (по умолчанию `main`).
+
+На VPS рядом с `docker-compose.yml` должен быть `.env`:
+
+```env
+HTTP_PORT=8080
+POSTGRES_DB=shark
+POSTGRES_USER=shark
+POSTGRES_PASSWORD=<strong-password>
+```
+
+Первичная инициализация схемы на VPS:
+
+```bash
+cd /root/my-interview.tech
+docker compose up -d postgres
+docker compose --profile tools run --rm sync npx 2shark@3.0.1 init-db
+```
+
+Канонический import, который выполняет workflow на VPS:
+
+```bash
+docker compose --profile tools run --rm sync npx 2shark@3.0.1 import \
+  --path ./docs \
+  --config ./scripts/frontmatter/config \
+  --repo-path . \
+  --branch main \
+  --commit-sha "${GITHUB_SHA}" \
+  --production-sync
+```
+
+Ожидаемое поведение при ошибках:
+
+- если `SSH_*` secret/variables не заданы, workflow падает с fail-fast ошибкой;
+- если `POSTGRES_PASSWORD` не задан в `.env`, `docker compose config` падает до импорта;
+- если import завершился ошибкой, job завершается с non-zero exit code.
+
+Smoke-checklist после интеграции:
+
+- push в `main` запускает `production-sync`;
+- успешный run по SSH запускает `2shark import` на VPS;
+- `articles` содержит активные записи, а `import_jobs` получает status `success`;
+- повторный запуск для одного и того же `github.sha` остаётся идемпотентным на стороне `2shark/import_jobs`.
+
+Backup PostgreSQL:
+
+```bash
+cd /root/my-interview.tech
+chmod +x deploy/vps/backup-postgres.sh
+deploy/vps/backup-postgres.sh
+```
+
+Пример cron лежит в `deploy/vps/cron.example`. На проде нельзя запускать `docker compose down -v` и удалять volume `postgres_data`: это удалит данные БД.
+
 ## 🛠️ Другие команды
 
 **Проверка типов TypeScript:**
