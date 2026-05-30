@@ -1,0 +1,52 @@
+name: Production Sync
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-sync
+  cancel-in-progress: true
+
+jobs:
+  sync-to-read-model:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Run production sync over SSH
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          SSH_HOST: ${{ vars.SSH_HOST }}
+          SSH_USER: ${{ vars.SSH_USER }}
+          SSH_DEPLOY_PATH: ${{ vars.SSH_DEPLOY_PATH }}
+          SSH_DEPLOY_BRANCH: ${{ vars.SSH_DEPLOY_BRANCH }}
+          GITHUB_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          test -n "${SSH_PRIVATE_KEY:-}" && test -n "${SSH_HOST:-}" && test -n "${SSH_USER:-}" && test -n "${SSH_DEPLOY_PATH:-}" \
+            || { echo "Missing SSH_PRIVATE_KEY (secret) or SSH_HOST / SSH_USER / SSH_DEPLOY_PATH (variables)"; exit 1; }
+
+          DEPLOY_BRANCH="${SSH_DEPLOY_BRANCH:-main}"
+
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+
+          ssh-keyscan -p 22 -H "$SSH_HOST" >> ~/.ssh/known_hosts 2>/dev/null || true
+
+          REMOTE_CMD="$(printf 'set -euo pipefail; cd %q && git fetch origin %q && git checkout %q && git pull --ff-only origin %q && docker compose config >/dev/null && docker compose up -d postgres && docker compose --profile tools build sync && docker compose --profile tools run --rm sync npx 2shark@3.0.1 import --path ./docs --config ./scripts/frontmatter/config --repo-path . --branch %q --commit-sha %q --production-sync' "$SSH_DEPLOY_PATH" "$DEPLOY_BRANCH" "$DEPLOY_BRANCH" "$DEPLOY_BRANCH" "$DEPLOY_BRANCH" "$GITHUB_SHA")"
+
+          ssh -i ~/.ssh/deploy_key \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=accept-new \
+            -o ServerAliveInterval=60 \
+            -o ServerAliveCountMax=180 \
+            -p 22 \
+            "$SSH_USER@$SSH_HOST" \
+            "$REMOTE_CMD"

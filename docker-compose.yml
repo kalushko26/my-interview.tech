@@ -12,3 +12,46 @@ services:
       timeout: 5s
       retries: 3
       start_period: 10s
+
+  postgres:
+    image: public.ecr.aws/docker/library/postgres:16-alpine
+    container_name: my-interview-postgres
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-shark}
+      POSTGRES_USER: ${POSTGRES_USER:-shark}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  sync:
+    build:
+      context: .
+      dockerfile: deploy/docker/2shark/Dockerfile
+    image: my-interview-tech-2shark-sync:local
+    profiles:
+      - tools
+    working_dir: /app
+    volumes:
+      - .:/app:ro
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: ${POSTGRES_DB:-shark}
+      DB_USER: ${POSTGRES_USER:-shark}
+      DB_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      GIT_CONFIG_COUNT: 1
+      GIT_CONFIG_KEY_0: core.quotePath
+      GIT_CONFIG_VALUE_0: "false"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
